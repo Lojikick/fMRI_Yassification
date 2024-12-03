@@ -21,67 +21,69 @@ args = parser.parse_args()
 sub=int(args.sub)
 assert sub in [1,2,5,7]
 
-cfgm_name = 'vd_noema'
-pth = 'versatile_diffusion/pretrained/vd-four-flow-v1-0-fp16-deprecated.pth'
-cfgm = model_cfg_bank()(cfgm_name)
-net = get_model()(cfgm)
-sd = torch.load(pth, map_location='cpu')
-net.load_state_dict(sd, strict=False)    
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-net.clip = net.clip.to(device)
-   
-train_caps = np.load('data/processed_data/subj{:02d}/nsd_train_cap_sub{}.npy'.format(sub,sub)) 
-test_caps = np.load('data/processed_data/subj{:02d}/nsd_test_cap_sub{}.npy'.format(sub,sub))  
+def extract_features(model_path, train_path, test_path, save_path):
+    cfgm_name = 'vd_noema'
+    pth = model_path #Path to pretrained vd-four-flow-v1-0-fp16-deprecated.pth
+    cfgm = model_cfg_bank()(cfgm_name)
+    net = get_model()(cfgm)
+    sd = torch.load(pth, map_location='cpu')
+    net.load_state_dict(sd, strict=False)    
 
-num_embed, num_features, num_test, num_train = 77, 768, len(test_caps), len(train_caps)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    net.clip = net.clip.to(device)
+    
+    train_caps = np.load(train_path) #path to train captions,
+    test_caps = np.load(test_path) #path to test captions,
 
-train_clip = np.zeros((num_train, num_embed, num_features))
-test_clip = np.zeros((num_test, num_embed, num_features))
+    num_embed, num_features, num_test, num_train = 77, 768, len(test_caps), len(train_caps)
 
-print("Content of first few train captions:")
-print(train_caps[:5])
-print("\nType of train_caps:", type(train_caps))
-print("Shape of train_caps:", train_caps.shape)
+    train_clip = np.zeros((num_train, num_embed, num_features))
+    test_clip = np.zeros((num_test, num_embed, num_features))
 
-with torch.no_grad():
-    # Process test captions
-    for i, annots in enumerate(test_caps):
-        # Filter out empty strings and convert to list of strings
-        cin = [str(annots)] # WARNING: original code
-        #cin = list(annots[annots!=''])
+    print("Content of first few train captions:")
+    print(train_caps[:5])
+    print("\nType of train_caps:", type(train_caps))
+    print("Shape of train_caps:", train_caps.shape)
+
+    with torch.no_grad():
+        # Process test captions
+        for i, annots in enumerate(test_caps):
+            # Filter out empty strings and convert to list of strings
+            cin = [str(annots)] # WARNING: original code
+            #cin = list(annots[annots!=''])
+            
+            if not cin:  # Skip if no valid captions
+                print(f"Warning: No valid captions for test sample {i}")
+                continue
+            print(f"Processing test sample {i}")
+            try:
+                # print("NEED DAT uncomment foo")
+                c = net.clip_encode_text(cin)
+                test_clip[i] = c.to('cpu').numpy().mean(0)
+            except Exception as e:
+                print(f"Error processing test sample {i}: {str(e)}")
+                print(f"Captions: {cin}")
+                continue
         
-        if not cin:  # Skip if no valid captions
-            print(f"Warning: No valid captions for test sample {i}")
-            continue
-        print(f"Processing test sample {i}")
-        try:
-            # print("NEED DAT uncomment foo")
-            c = net.clip_encode_text(cin)
-            test_clip[i] = c.to('cpu').numpy().mean(0)
-        except Exception as e:
-            print(f"Error processing test sample {i}: {str(e)}")
-            print(f"Captions: {cin}")
-            continue
-    
-    # np.save('data/extracted_features/subj{:02d}/nsd_cliptext_test.npy'.format(sub), test_clip)
-    
-    # Process train captions
-    for i, annots in enumerate(train_caps):
-        # Filter out empty strings and convert to list of strings
-        cin = [str(annots)]
-        if not cin:  # Skip if no valid captions
-            print(f"Warning: No valid captions for train sample {i}")
-            continue
-        print(f"Processing train sample {i}")
-        try:
-            # print("NEED DAT uncomment foo")
-            c = net.clip_encode_text(cin)
-            train_clip[i] = c.to('cpu').numpy().mean(0)
-        except Exception as e:
-            print(f"Error processing train sample {i}: {str(e)}")
-            print(f"Captions: {cin}")
-            continue
-    
-    np.save('data/extracted_features/subj{:02d}/nsd_cliptext_train.npy'.format(sub), train_clip)
+        # np.save('data/extracted_features/subj{:02d}/nsd_cliptext_test.npy'.format(sub), test_clip)
+        
+        # Process train captions
+        for i, annots in enumerate(train_caps):
+            # Filter out empty strings and convert to list of strings
+            cin = [str(annots)]
+            if not cin:  # Skip if no valid captions
+                print(f"Warning: No valid captions for train sample {i}")
+                continue
+            print(f"Processing train sample {i}")
+            try:
+                # print("NEED DAT uncomment foo")
+                c = net.clip_encode_text(cin)
+                train_clip[i] = c.to('cpu').numpy().mean(0)
+            except Exception as e:
+                print(f"Error processing train sample {i}: {str(e)}")
+                print(f"Captions: {cin}")
+                continue
+        #name the clip text features as 'nsd_cliptext_train.npy'
+        np.save(save_path, train_clip)
 
