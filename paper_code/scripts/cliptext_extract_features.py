@@ -14,12 +14,12 @@ from lib.cfg_helper import get_command_line_args, cfg_initiates, load_cfg_yaml
 import matplotlib.pyplot as plt
 import torchvision.transforms as T
 
-import argparse
-parser = argparse.ArgumentParser(description='Argument Parser')
-parser.add_argument("-sub", "--sub",help="Subject Number",default=1)
-args = parser.parse_args()
-sub=int(args.sub)
-assert sub in [1,2,5,7]
+# import argparse
+# parser = argparse.ArgumentParser(description='Argument Parser')
+# parser.add_argument("-sub", "--sub",help="Subject Number",default=1)
+# args = parser.parse_args()
+# sub=int(args.sub)
+# assert sub in [1,2,5,7]
 
 
 def extract_features(model_path, train_path, test_path, save_path):
