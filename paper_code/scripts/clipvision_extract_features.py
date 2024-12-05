@@ -4,127 +4,102 @@ import os
 import PIL
 from PIL import Image
 import numpy as np
+
 import torch
 from lib.cfg_helper import model_cfg_bank
 from lib.model_zoo import get_model
+from lib.experiments.sd_default import color_adjust, auto_merge_imlist
 from torch.utils.data import DataLoader, Dataset
+
+from lib.model_zoo.vd import VD
+from lib.cfg_holder import cfg_unique_holder as cfguh
+from lib.cfg_helper import get_command_line_args, cfg_initiates, load_cfg_yaml
 import torchvision.transforms as T
+
 import argparse
-import math
+parser = argparse.ArgumentParser(description='Argument Parser')
+parser.add_argument("-sub", "--sub",help="Subject Number",default=1)
+args = parser.parse_args()
+sub=int(args.sub)
+assert sub in [1,2,5,7]
 
-def save_features_in_chunks(features, output_path, chunk_size=1000):
-    """Save large arrays in chunks to avoid memory issues"""
-    if not os.path.exists(os.path.dirname(output_path)):
-        os.makedirs(os.path.dirname(output_path))
-        
-    total_samples = features.shape[0]
-    num_chunks = math.ceil(total_samples / chunk_size)
-    
-    # Create an empty file with the final shape
-    merged_array = np.lib.format.open_memmap(
-        output_path, mode='w+',
-        shape=features.shape,
-        dtype=features.dtype
-    )
-    
-    # Save in chunks
-    for i in range(num_chunks):
-        start_idx = i * chunk_size
-        end_idx = min((i + 1) * chunk_size, total_samples)
-        merged_array[start_idx:end_idx] = features[start_idx:end_idx]
-    
-    del merged_array  # Flush to disk
+cfgm_name = 'vd_noema'
 
-class BatchGeneratorExternalImages(Dataset):
-    def __init__(self, data_path):
+pth = 'versatile_diffusion/pretrained/vd-four-flow-v1-0-fp16-deprecated.pth'
+cfgm = model_cfg_bank()(cfgm_name)
+net = get_model()(cfgm)
+sd = torch.load(pth, map_location='cpu')
+net.load_state_dict(sd, strict=False)    
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+net.clip = net.clip.to(device)
+
+
+class batch_generator_external_images(Dataset):
+    def __init__(self, data_path, chunk_size=1000):
         self.data_path = data_path
-        # Load data in chunks using memmap
-        self.im = np.load(data_path, mmap_mode='r')
+        self.chunk_size = chunk_size
         
+        # Get file size and shape without loading the whole array
+        with open(data_path, 'rb') as f:
+            version = np.lib.format.read_magic(f)
+            shape, fortran, dtype = np.lib.format.read_array_header_1_0(f)
+        self.shape = shape
+        self.dtype = dtype
+        self.length = shape[0]
+
     def __getitem__(self, idx):
-        img = Image.fromarray(self.im[idx].astype(np.uint8))
-        img = T.functional.resize(img, (512, 512))
-        img = T.functional.to_tensor(img).float()
-        img = img * 2 - 1
+        # Memory-efficient loading of single image
+        offset = idx * np.prod(self.shape[1:]) * self.dtype.itemsize
+        with open(self.data_path, 'rb') as f:
+            f.seek(offset)
+            data = np.fromfile(f, dtype=self.dtype, count=np.prod(self.shape[1:]))
+            img_array = data.reshape(self.shape[1:])
+        
+        img = Image.fromarray(img_array.astype(np.uint8))
+        img = T.functional.resize(img, (64, 64))
+        img = torch.tensor(np.array(img)).float()
         return img
-    
+
     def __len__(self):
-        return len(self.im)
+        return self.length
 
-def process_dataset(net, dataloader, num_samples, batch_size, output_path, device):
-    num_embed, num_features = 257, 768
-    # Process in smaller chunks to save memory
-    chunk_size = min(1000, num_samples)
-    current_chunk = np.zeros((chunk_size, num_embed, num_features), dtype=np.float32)
-    chunk_idx = 0
-    sample_in_chunk = 0
     
-    with torch.no_grad():
-        for i, cin in enumerate(dataloader):
-            print(f"Processing batch {i}/{len(dataloader)}")
-            cin = cin.to(device)
-            c = net.clip_encode_vision(cin)
-            current_batch = c[0].cpu().numpy()
-            
-            # Add to current chunk
-            batch_size_actual = current_batch.shape[0]
-            if sample_in_chunk + batch_size_actual > chunk_size:
-                # Save current chunk and start new one
-                save_features_in_chunks(current_chunk[:sample_in_chunk], 
-                                     output_path + f'.part{chunk_idx}',
-                                     chunk_size=100)
-                chunk_idx += 1
-                sample_in_chunk = 0
-                
-            current_chunk[sample_in_chunk:sample_in_chunk + batch_size_actual] = current_batch
-            sample_in_chunk += batch_size_actual
-            
-        # Save final chunk
-        if sample_in_chunk > 0:
-            save_features_in_chunks(current_chunk[:sample_in_chunk],
-                                  output_path + f'.part{chunk_idx}',
-                                  chunk_size=100)
 
-def main():
-    parser = argparse.ArgumentParser(description='Argument Parser')
-    parser.add_argument("-sub", "--sub", help="Subject Number", default=1)
-    parser.add_argument("--batch_size", type=int, default=4, help="Batch size for processing")
-    args = parser.parse_args()
-    
-    sub = int(args.sub)
-    assert sub in [1, 2, 5, 7]
-    
-    # Model setup
-    cfgm_name = 'vd_noema'
-    pth = 'versatile_diffusion/pretrained/vd-four-flow-v1-0-fp16-deprecated.pth'
-    cfgm = model_cfg_bank()(cfgm_name)
-    net = get_model()(cfgm)
-    sd = torch.load(pth, map_location='cpu')
-    net.load_state_dict(sd, strict=False)
-    
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    net.clip = net.clip.to(device)
-    
-    # Data loading
-    batch_size = args.batch_size
-    
-    # Process training data
-    train_path = f'data/processed_data/subj{sub:02d}/nsd_train_stim_sub{sub}.npy'
-    train_images = BatchGeneratorExternalImages(data_path=train_path)
-    trainloader = DataLoader(train_images, batch_size, shuffle=False)
-    
-    train_output = f'data/extracted_features/subj{sub:02d}/nsd_clipvision_train'
-    process_dataset(net, trainloader, len(train_images), batch_size, train_output, device)
-    
-    # Process test data
-    test_path = f'data/processed_data/subj{sub:02d}/nsd_test_stim_sub{sub}.npy'
-    test_images = BatchGeneratorExternalImages(data_path=test_path)
-    testloader = DataLoader(test_images, batch_size, shuffle=False)
-    
-    test_output = f'data/extracted_features/subj{sub:02d}/nsd_clipvision_test'
-    process_dataset(net, testloader, len(test_images), batch_size, test_output, device)
+image_path = 'data/processed_data/subj{:02d}/nsd_train_stim_sub{}.npy'.format(sub,sub)
+train_images = batch_generator_external_images(data_path = image_path)
 
-if __name__ == "__main__":
-    main()
+image_path = 'data/processed_data/subj{:02d}/nsd_test_stim_sub{}.npy'.format(sub,sub)
+test_images = batch_generator_external_images(data_path = image_path)
+
+trainloader = DataLoader(train_images,batch_size=32,shuffle=False)
+testloader = DataLoader(test_images,batch_size=32,shuffle=False)
+
+num_embed, num_features, num_test, num_train = 257, 768, len(test_images), len(train_images)
+
+# Process in batches
+train_features = []
+test_features = []
+
+print("Processing training images...")
+with torch.no_grad():
+    for i, batch in enumerate(trainloader):
+        print(f"Processing batch {i+1}/{len(trainloader)}")
+        features = net.clip_encode_image(batch.to(device))
+        train_features.append(features.cpu().numpy())
+
+    train_features = np.concatenate(train_features, axis=0)
+    np.save(f'data/extracted_features/subj{sub:02d}/nsd_clipvision_train.npy', train_features)
+
+print("Processing test images...")
+with torch.no_grad():
+    for i, batch in enumerate(testloader):
+        print(f"Processing batch {i+1}/{len(testloader)}")
+        features = net.clip_encode_image(batch.to(device))
+        test_features.append(features.cpu().numpy())
+
+    test_features = np.concatenate(test_features, axis=0)
+    np.save(f'data/extracted_features/subj{sub:02d}/nsd_clipvision_test.npy', test_features)
+
 
     
