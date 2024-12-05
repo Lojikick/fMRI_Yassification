@@ -85,7 +85,7 @@ print("Processing training images...")
 with torch.no_grad():
     for i, batch in enumerate(trainloader):
         print(f"Processing batch {i+1}/{len(trainloader)}")
-        features = net.clip.encode_vision(batch.to(device))
+        features = net.clip.encode_vision(batch.to(device).cpu())
         train_features.append(features.cpu().numpy())
 
     train_features = np.concatenate(train_features, axis=0)
@@ -95,7 +95,7 @@ print("Processing test images...")
 with torch.no_grad():
     for i, batch in enumerate(testloader):
         print(f"Processing batch {i+1}/{len(testloader)}")
-        features = net.clip.encode_vision(batch.to(device))
+        features = net.clip.encode_vision(batch.to(device).cpu())
         test_features.append(features.cpu().numpy())
 
     test_features = np.concatenate(test_features, axis=0)
