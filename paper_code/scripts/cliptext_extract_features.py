@@ -14,17 +14,17 @@ from lib.cfg_helper import get_command_line_args, cfg_initiates, load_cfg_yaml
 import matplotlib.pyplot as plt
 import torchvision.transforms as T
 
-# import argparse
-# parser = argparse.ArgumentParser(description='Argument Parser')
-# parser.add_argument("-sub", "--sub",help="Subject Number",default=1)
-# args = parser.parse_args()
-# sub=int(args.sub)
-# assert sub in [1,2,5,7]
+import argparse
+parser = argparse.ArgumentParser(description='Argument Parser')
+parser.add_argument("-sub", "--sub",help="Subject Number",default=1)
+args = parser.parse_args()
+sub=int(args.sub)
+assert sub in [1,2,5,7]
 
 
-def extract_features(model_path, train_path, test_path, save_path):
+def extract_features():
     cfgm_name = 'vd_noema'
-    pth = model_path #Path to pretrained vd-four-flow-v1-0-fp16-deprecated.pth
+    pth = 'versatile_diffusion/pretrained/vd-four-flow-v1-0-fp16-deprecated.pth' #vd-four-flow-v1-0-fp16-deprecated.pth
     cfgm = model_cfg_bank()(cfgm_name)
     net = get_model()(cfgm)
     sd = torch.load(pth, map_location='cpu')
@@ -33,8 +33,8 @@ def extract_features(model_path, train_path, test_path, save_path):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     net.clip = net.clip.to(device)
     
-    train_caps = np.load(train_path) #path to train captions,
-    test_caps = np.load(test_path) #path to test captions,
+    train_caps = np.load('data/processed_data/subj01/nsd_train_cap_sub1.npy'.format(sub,sub)) 
+    test_caps = np.load('data/processed_data/subj01/nsd_test_cap_sub1.npy'.format(sub,sub))  
 
     num_embed, num_features, num_test, num_train = 77, 768, len(test_caps), len(train_caps)
 
@@ -84,6 +84,6 @@ def extract_features(model_path, train_path, test_path, save_path):
                 print(f"Error processing train sample {i}: {str(e)}")
                 print(f"Captions: {cin}")
                 continue
-        #name the clip text features as 'nsd_cliptext_train.npy'
-        np.save(save_path, train_clip)
+        
+        np.save('data/extracted_features/subj01/nsd_cliptext_train.npy'.format(sub), train_clip)
 
